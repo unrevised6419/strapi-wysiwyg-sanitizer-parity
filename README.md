@@ -73,22 +73,19 @@ directly (`<script>`) or via browser mXSS mutation (the `svg/style` and
 `math/mglyph` foreign-content classics). The new config strips all three.
 **Zero** live-XSS primitives survive the new config across all 230 inputs.
 
-### Two findings the new config is *more permissive* than the old (both inert)
-The suite flags these as documented divergences, not failures — neither is an
-XSS vector, but each makes the new config looser than the old and looser than
-its own `ALLOWED_ATTR` list implies:
+### Findings where the new config was *more permissive* than the old
 
-1. **`aria-*` attributes pass through.** DOMPurify's `ALLOW_ARIA_ATTR` defaults
-   to `true`, independent of `ALLOWED_ATTR`. Old stripped all `aria-*`.
-   → For exact parity, set `ALLOW_ARIA_ATTR: false` in `sanitizer.ts`.
-2. **`data:` URIs survive on media tags.** DOMPurify permits `data:` on
-   `img`/`source`/`video`/`audio` regardless of `ALLOWED_URI_REGEXP` — this
-   includes `data:image/*`, `data:image/svg+xml`, and even
-   `data:text/html;base64` on `<img>` (inert there). Old stripped **all**
-   `data:`. `data:text/html` in a navigable attribute (`<a href>`) is still
-   blocked by both.
-   → Accept (inline images are a feature) or block via an
-   `uponSanitizeAttribute` hook for strict parity.
+1. **`data:` URIs survive on media tags — FIXED.** DOMPurify permits `data:` on
+   `img`/`source`/`video`/`audio` regardless of `ALLOWED_URI_REGEXP` (its
+   `DATA_URI_TAGS` allowlist) — including `data:image/*`, `data:image/svg+xml`,
+   and even `data:text/html;base64` on `<img>`. The old config stripped **all**
+   `data:`. Resolved by an `afterSanitizeAttributes` hook in `sanitizer.ts` that
+   strips any `data:` value from `src`/`href`/`xlink:href`. The suite now
+   asserts both configs drop every `data:` input.
+2. **`aria-*` attributes pass through — OPEN.** DOMPurify's `ALLOW_ARIA_ATTR`
+   defaults to `true`, independent of `ALLOWED_ATTR`. Old stripped all `aria-*`.
+   Inert (no XSS vector), so left as a documented divergence. → For exact parity,
+   set `ALLOW_ARIA_ATTR: false`.
 
 ## Files
 

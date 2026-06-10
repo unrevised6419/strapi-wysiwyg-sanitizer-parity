@@ -43,8 +43,10 @@ export const CLASS_TITLE_KEPT = [
   '<div class="x y z">multi</div>',
 ];
 
-/* ── data:image — NEW keeps, OLD strips (documented divergence) ───────────── */
-export const DATA_IMAGE_KEPT = [
+/* ── data: URIs — stripped by BOTH. DOMPurify would keep them on media tags via
+ *    its DATA_URI_TAGS allowlist; the new config's afterSanitizeAttributes hook
+ *    strips them to match the old config (which stripped all data:). */
+export const DATA_URIS = [
   '<img src="data:image/png;base64,iVBORw0KGgo=">',
   '<img src="data:image/gif;base64,R0lGOD">',
   '<img src="data:image/svg+xml,<svg onload=alert(1)>">',
@@ -166,7 +168,7 @@ export const OBFUSCATION = [
 
 /* ── Everything, for the security + permissiveness invariants ─────────────── */
 export const ALL = [
-  ...SAFE_MARKDOWN, ...CLASS_TITLE_KEPT, ...DATA_IMAGE_KEPT, ...DISALLOWED_ATTRS, ...ARIA_KEPT,
+  ...SAFE_MARKDOWN, ...CLASS_TITLE_KEPT, ...DATA_URIS, ...DISALLOWED_ATTRS, ...ARIA_KEPT,
   ...SAFE_SCHEMES.flatMap((s) => [`<a href="${s}">x</a>`, `<img src="${s}">`]),
   ...BAD_SCHEMES.flatMap((s) => [`<a href="${s}">x</a>`, `<img src="${s}" alt="x">`]),
   ...DANGEROUS_TAGS, ...EVENT_HANDLERS, ...MXSS, ...OBFUSCATION,

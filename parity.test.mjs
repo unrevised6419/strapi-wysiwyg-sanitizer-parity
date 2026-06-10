@@ -10,7 +10,7 @@ import {
 import {
   SAFE_MARKDOWN,
   CLASS_TITLE_KEPT,
-  DATA_IMAGE_KEPT,
+  DATA_URIS,
   DISALLOWED_ATTRS,
   ARIA_KEPT,
   SAFE_SCHEMES,
@@ -34,8 +34,10 @@ describe('SECURITY: the new DOMPurify config leaks no live XSS primitive', () =>
 
 describe('SECURITY: the new config keeps no dangerous attribute the old one stripped', () => {
   // The only attributes new may keep that old removed are inert: class, title,
-  // aria-*, and `src` carrying an inline data: media URI. Anything else (an
-  // event handler, a navigable script scheme) would be a regression.
+  // aria-*, and an occasional plain `src` where the two parsers disagree on a
+  // malformed-comment edge case (the value is a harmless relative URL — any
+  // dangerous scheme is caught by the live-XSS invariant above). Anything else
+  // (an event handler, a navigable script scheme) would be a regression.
   const INERT = (a) => a === 'class' || a === 'title' || a.startsWith('aria-') || a === 'src';
   it.each(each(ALL))('no dangerous extra attr for %s', (_l, html) => {
     expect(extraAttrsKeptByNew(html).filter((a) => !INERT(a))).toEqual([]);
@@ -99,15 +101,16 @@ describe('DIFF (finding): new lets aria-* through, old stripped it', () => {
   });
 });
 
-describe('DIFF (finding): new keeps data: media URIs, old stripped all data:', () => {
-  // DOMPurify permits data: on media tags (img/source/video/audio) regardless
-  // of ALLOWED_URI_REGEXP. Inert in those non-active contexts; old stripped all.
-  it.each(each(DATA_IMAGE_KEPT))('data: kept by new, dropped by old for %s', (_l, html) => {
-    expect(/src="data:/.test(newSanitize(html))).toBe(true);
-    expect(/src="data:/.test(oldSanitize(html))).toBe(false);
+describe('PARITY (fixed): data: URIs stripped by both, including on media tags', () => {
+  // DOMPurify would keep data: on media tags (img/source/video/audio) via its
+  // DATA_URI_TAGS allowlist; the new config's afterSanitizeAttributes hook
+  // strips them to match the old config, which stripped all data:.
+  it.each(each(DATA_URIS))('data: dropped by both for %s', (_l, html) => {
+    expect(/data:/.test(newSanitize(html))).toBe(false);
+    expect(/data:/.test(oldSanitize(html))).toBe(false);
   });
 
-  it('data:text/html in a NAVIGABLE attr is still blocked by both', () => {
+  it('data:text/html in a navigable attr is blocked by both', () => {
     const html = '<a href="data:text/html,<script>alert(1)</script>">l</a>';
     expect(hasLiveXss(newSanitize(html))).toBe(false);
     expect(hasLiveXss(oldSanitize(html))).toBe(false);
