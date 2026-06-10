@@ -1,55 +1,100 @@
-# Sanitizer parity check
+# Wysiwyg sanitizer parity
 
-Standalone differential harness comparing the **old `sanitize-html` config**
-(removed in PR #26150) against the **new DOMPurify config** for the Wysiwyg
-markdown preview. Self-contained — own `node_modules`, own git repo, isolated
-from the Strapi monorepo lockfile. Throwaway / verification only; not shipped.
+Differential test suite comparing the **old `sanitize-html` config** (removed in
+[strapi/strapi#26150](https://github.com/strapi/strapi/pull/26150)) against the
+**new DOMPurify config** for the Content-Manager Wysiwyg markdown preview.
+
+Self-contained — its own `package.json`, lockfile and git repo, isolated from
+the Strapi monorepo. Verification only; nothing here ships.
+
+The goal: prove the two sanitizers behave equivalently **in practice, not at
+first glance** — and pin down every place they intentionally differ.
 
 ## Run
 
 ```bash
-npm install
-npm run compare      # exits non-zero on an unexpected diff or a live XSS leak in the new config
+npm ci
+npm test          # vitest run
 ```
 
-Both sanitizers get identical HTML (the shared `md.render` step is factored
-out). Outputs are normalized through a common DOM serializer so cosmetic noise
-(`<hr/>` vs `<hr>`, `controls` vs `controls=""`, `&nbsp;` vs the raw char)
-collapses, leaving only semantic differences.
+CI runs the same on every push/PR — see [`.github/workflows/test.yml`](.github/workflows/test.yml).
 
-## Result (57 cases)
+## Method
 
-| bucket | count | meaning |
-| --- | --- | --- |
-| identical | 40 | byte-identical after normalization |
-| expected diff | 15 | `class`/`title` now kept (intended); dangerous tags now stripped (security win) |
-| **unexpected diff** | **2** | `data:image/*` inline images — see below |
-| **live XSS in OLD** | **3** | `<script>`, two mXSS payloads — execute under old config, neutralized by new |
-| live XSS in NEW | 0 | — |
+`sanitizers.mjs` holds both configs verbatim:
 
-## The one genuine behavioral divergence: `data:image/*`
+- `oldSanitize` — the exact pre-PR `sanitize-html` options (`allowedTags: false`,
+  the `*`/`img`/`source` attribute allowlist, `sanitize-html` defaults for
+  schemes).
+- `newSanitize` — the exact `utils/sanitizer.ts` DOMPurify options
+  (`ALLOWED_ATTR`, `ALLOWED_URI_REGEXP`, `ALLOW_DATA_ATTR: false`).
 
-DOMPurify special-cases `data:` URIs on media tags (`img`/`video`/`audio`/
-`source`) via its internal mimetype-restricted allowlist, **independent of our
-`ALLOWED_URI_REGEXP`**. So the new config permits inline images the old config
-stripped:
+Both receive **identical HTML** — the shared `md.render` step is factored out, so
+only the sanitizer varies. Three precautions keep the comparison honest:
 
-| input | old | new |
-| --- | --- | --- |
-| `<img src="data:image/png;base64,…">` | stripped | **kept** |
-| `<img src="data:image/svg+xml,…onload…">` | stripped | **kept** (inert — SVG via `<img>` can't run script) |
-| `<img src="data:text/html,…">` | stripped | stripped (mimetype not in DOMPurify's safe list) |
-| `<a href="data:text/html,…">` | stripped | stripped (`<a>` isn't a data-URI tag) |
+1. **Normalization.** Outputs are re-serialized through a common DOM
+   (`normalize`) so cosmetic-only noise — `<hr/>` vs `<hr>`, `controls` vs
+   `controls=""`, `&nbsp;` vs the raw char, redundant `</source>` — collapses.
+   Only semantic diffs remain.
+2. **DOM-based detection.** Attribute extraction and XSS detection parse the DOM
+   rather than regex-matching strings, so an `=` inside a `data:` URI value, or a
+   `javascript` substring that is not at scheme position, is never miscounted.
+3. **Live-primitive definition.** `hasLiveXss` flags a `<script>` element, any
+   `on*` handler, a script pseudo-scheme (`javascript:` …) in any URL attribute,
+   or `data:text/html` in a **navigable** attribute. A handler embedded in a
+   `data:image/svg+xml` URI loaded via `<img>` is treated as inert — correctly,
+   since that is a non-active context.
 
-Not a security regression — `data:text/html` is still blocked everywhere, and
-`data:image/svg+xml` in an `<img>` is a non-active context. But it contradicts
-the `sanitizer.ts` comment that implies all `data:` is blocked, and the unit
-test only exercised `data:text/html`. Decide: accept + document (inline images
-are a feature), or block all `data:` via an `uponSanitizeAttribute` hook to
-match the old config exactly.
+The corpus (`corpus.mjs`, **230 inputs**) covers markdown-it output, every
+allowed/disallowed attribute, the full URL-scheme matrix with obfuscations
+(mixed case, entities, embedded control chars), a 31-entry dangerous-tag
+battery, 43 event-handler placements, and 17 cure53 mXSS/parser-confusion
+classics. **593 test cases**, all green.
 
-## Headline
+## Report
 
-The old config was **actively XSS-vulnerable** (raw `<script>` plus two mXSS
-gadgets execute); the new config neutralizes all three. The migration is a
-security upgrade, not a cosmetic swap.
+### Parity holds where it should
+- All safe markdown-it output is **byte-identical** after normalization.
+- All disallowed attributes (`id`, `style`, `name`, `data-*`, `role`,
+  `tabindex`, `rel`, `srcset`, …) are stripped by **both**.
+- The URL-scheme allow/deny decision **agrees** across both for the entire
+  scheme matrix, including every obfuscation tried.
+
+### Intended differences (this PR's design)
+- **`class` / `title` are now kept** (old stripped them) — restores highlight.js
+  code-block styling, footnote styling, and link/abbr tooltips.
+- **Dangerous tags are now stripped** — `script`, `style`, `iframe`, `object`,
+  `embed`, `form`, `base`, `meta`, `noscript`, plus SVG/MathML script vectors.
+  Old kept them all via `allowedTags: false`.
+
+### Security: the migration is an upgrade, empirically
+Three inputs leave an **executable gadget** in the old config's output —
+directly (`<script>`) or via browser mXSS mutation (the `svg/style` and
+`math/mglyph` foreign-content classics). The new config strips all three.
+**Zero** live-XSS primitives survive the new config across all 230 inputs.
+
+### Two findings the new config is *more permissive* than the old (both inert)
+The suite flags these as documented divergences, not failures — neither is an
+XSS vector, but each makes the new config looser than the old and looser than
+its own `ALLOWED_ATTR` list implies:
+
+1. **`aria-*` attributes pass through.** DOMPurify's `ALLOW_ARIA_ATTR` defaults
+   to `true`, independent of `ALLOWED_ATTR`. Old stripped all `aria-*`.
+   → For exact parity, set `ALLOW_ARIA_ATTR: false` in `sanitizer.ts`.
+2. **`data:` URIs survive on media tags.** DOMPurify permits `data:` on
+   `img`/`source`/`video`/`audio` regardless of `ALLOWED_URI_REGEXP` — this
+   includes `data:image/*`, `data:image/svg+xml`, and even
+   `data:text/html;base64` on `<img>` (inert there). Old stripped **all**
+   `data:`. `data:text/html` in a navigable attribute (`<a href>`) is still
+   blocked by both.
+   → Accept (inline images are a feature) or block via an
+   `uponSanitizeAttribute` hook for strict parity.
+
+## Files
+
+| file | purpose |
+| --- | --- |
+| `sanitizers.mjs` | the two configs + DOM-based helpers |
+| `corpus.mjs` | 230 categorized test inputs |
+| `parity.test.mjs` | invariants + parity + characterization tests |
+| `vitest.config.mjs` | jsdom environment (DOMPurify needs a DOM) |

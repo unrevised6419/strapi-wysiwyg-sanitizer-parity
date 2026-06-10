@@ -1,15 +1,18 @@
 {
-  "name": "sanitizer-parity-check",
+  "name": "strapi-wysiwyg-sanitizer-parity",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Differential harness: old sanitize-html config vs new DOMPurify config for the Wysiwyg preview.",
+  "description": "Differential tests: old sanitize-html config vs new DOMPurify config for the Wysiwyg preview.",
   "scripts": {
-    "compare": "node compare.mjs"
+    "test": "vitest run"
   },
   "dependencies": {
     "dompurify": "3.4.5",
-    "jsdom": "24.1.0",
     "sanitize-html": "2.17.4"
+  },
+  "devDependencies": {
+    "jsdom": "^29.1.1",
+    "vitest": "^4.1.8"
   }
 }
