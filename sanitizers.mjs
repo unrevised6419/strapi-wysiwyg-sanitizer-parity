@@ -8,7 +8,11 @@
  * and `document` is available for output normalization.
  */
 import sanitizeHtml from 'sanitize-html';
-import DOMPurify from 'dompurify';
+import createDOMPurify from 'dompurify';
+
+// Own instance (mirrors production sanitizer.ts) so the data: hook stays scoped
+// to this module instead of mutating the library-wide singleton.
+const DOMPurify = createDOMPurify(window);
 
 // sanitize-html warns on every call about script/style in allowedTags
 // (the exact warning the old Field.test.tsx had to suppress).
